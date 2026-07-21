@@ -1,58 +1,6 @@
-[gd_scene format=3 uid="uid://bsx47anmnegm0"]
+[gd_scene load_steps=2 format=3]
 
-[ext_resource type="Script" uid="uid://378kvh10vwog" path="res://scenes/player.gd" id="1_o5qli"]
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 
-[sub_resource type="BoxMesh" id="BoxMesh_y2fa8"]
-size = Vector3(20, 0.2, 20)
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_4xvcy"]
-size = Vector3(20, 0.2, 20)
-
-[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_4xvcy"]
-
-[sub_resource type="CapsuleMesh" id="CapsuleMesh_y2fa8"]
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_o5qli"]
-
-[sub_resource type="BoxMesh" id="BoxMesh_4xvcy"]
-material = SubResource("StandardMaterial3D_o5qli")
-size = Vector3(12, 0.1, 12)
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_o5qli"]
-size = Vector3(12, 0.1, 12)
-
-[node name="Main" type="Node3D" unique_id=1615905432]
-
-[node name="Ground" type="StaticBody3D" parent="." unique_id=32830926]
-
-[node name="MeshInstance3D" type="MeshInstance3D" parent="Ground" unique_id=118709533]
-custom_aabb = AABB(29, 0.2, 20, 0, 0, 0)
-mesh = SubResource("BoxMesh_y2fa8")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Ground" unique_id=1497250346]
-shape = SubResource("BoxShape3D_4xvcy")
-
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=503889822]
-
-[node name="Player" type="CharacterBody3D" parent="." unique_id=1023049596]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
-script = ExtResource("1_o5qli")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Player" unique_id=817652063]
-shape = SubResource("CapsuleShape3D_4xvcy")
-
-[node name="MeshInstance3D" type="MeshInstance3D" parent="Player" unique_id=239884713]
-mesh = SubResource("CapsuleMesh_y2fa8")
-
-[node name="Camera3D" type="Camera3D" parent="Player" unique_id=1159605887]
-transform = Transform3D(1, 0, 0, 0, 0.90630776, 0.42261827, 0, -0.42261827, 0.90630776, 0, 3, 7)
-current = true
-
-[node name="SnowGround" type="StaticBody3D" parent="." unique_id=744937655]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.15, 0)
-
-[node name="MeshInstance3D" type="MeshInstance3D" parent="SnowGround" unique_id=471868498]
-mesh = SubResource("BoxMesh_4xvcy")
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="SnowGround" unique_id=1699893694]
-shape = SubResource("BoxShape3D_o5qli")
+[node name="Main" type="Node3D"]
+script = ExtResource("1_main")
