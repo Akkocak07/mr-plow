@@ -138,13 +138,6 @@ func _unhandled_input(event: InputEvent) -> void:
 			)
 			camera.rotation.x = camera_pitch
 
-	elif event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_ESCAPE:
-			if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-				Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-			else:
-				Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
-
 	elif event is InputEventMouseButton and event.pressed:
 		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
@@ -395,7 +388,7 @@ func _build_compact_plow() -> void:
 		"PlowBlade",
 		Vector3(1.30, 0.48, 0.12),
 		Vector3(0.0, -0.32, -0.46),
-	blade_material
+		blade_material
 	)
 	plow_blade.rotation_degrees.y = -10.0
 	plow_blade.rotation_degrees.x = -8.0

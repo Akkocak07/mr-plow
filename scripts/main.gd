@@ -43,8 +43,38 @@ var action_cooldown: float = 0.0
 var level_transitioning := false
 var completion_announced := false
 
+var current_contract: Dictionary = {}
+var contract_name: String = "Standard Residential"
+var contract_description: String = ""
+var contract_payout_multiplier: float = 1.0
+var contract_depth_bonus: float = 0.0
+var contract_target_factor: float = 1.0
+var contract_extra_cars: int = 0
+var contract_precision_multiplier: float = 1.5
+
+var level_elapsed: float = 0.0
+var target_time: float = 120.0
+var combo_tiles: int = 0
+var combo_multiplier: float = 1.0
+var combo_time_left: float = 0.0
+var max_combo_multiplier: float = 1.0
+var level_money_earned: int = 0
+var level_precision_tiles: int = 0
+var best_times: Dictionary = {}
+var level_generation_id: int = 0
+
+var hud_root: Control
+var progress_bar: ProgressBar
+var progress_value_label: Label
+var timer_label: Label
+var contract_label: Label
+var combo_label: Label
+var bonus_label: Label
+var pause_overlay: ColorRect
+var confirmation_overlay: ColorRect
+var confirm_return_to_pause: bool = false
+
 var level_label: Label
-var snow_label: Label
 var money_label: Label
 var tool_label: Label
 var upgrade_label: Label
@@ -55,7 +85,7 @@ var level_banner: Label
 var upgrades: Array[Dictionary] = [
 	{
 		"name": "Wide Snow Shovel",
-		"cost": 200,
+		"cost": 70,
 		"radius": 0.96,
 		"distance": 1.35,
 		"payout": 1,
@@ -64,7 +94,7 @@ var upgrades: Array[Dictionary] = [
 	},
 	{
 		"name": "Electric Snow Blower",
-		"cost": 400,
+		"cost": 260,
 		"radius": 1.50,
 		"distance": 1.55,
 		"payout": 2,
@@ -73,7 +103,7 @@ var upgrades: Array[Dictionary] = [
 	},
 	{
 		"name": "Compact Snow Plow",
-		"cost": 2000,
+		"cost": 900,
 		"radius": 2.25,
 		"distance": 1.80,
 		"payout": 4,
@@ -83,7 +113,58 @@ var upgrades: Array[Dictionary] = [
 ]
 
 
+var contracts: Array[Dictionary] = [
+	{
+		"name": "Standard Residential",
+		"description": "A balanced driveway with normal snowfall.",
+		"payout_multiplier": 1.0,
+		"depth_bonus": 0.0,
+		"target_factor": 1.0,
+		"extra_cars": 0,
+		"precision_multiplier": 1.5
+	},
+	{
+		"name": "Heavy Overnight Snow",
+		"description": "Deeper snow, a longer target time, and better pay.",
+		"payout_multiplier": 1.25,
+		"depth_bonus": 0.055,
+		"target_factor": 1.16,
+		"extra_cars": 0,
+		"precision_multiplier": 1.5
+	},
+	{
+		"name": "Morning Rush",
+		"description": "Finish quickly before the residents leave for work.",
+		"payout_multiplier": 1.35,
+		"depth_bonus": 0.01,
+		"target_factor": 0.78,
+		"extra_cars": 1,
+		"precision_multiplier": 1.6
+	},
+	{
+		"name": "Crowded Driveway",
+		"description": "More parked vehicles create narrow cleaning routes.",
+		"payout_multiplier": 1.20,
+		"depth_bonus": 0.025,
+		"target_factor": 1.08,
+		"extra_cars": 2,
+		"precision_multiplier": 1.75
+	},
+	{
+		"name": "Careful Around Vehicles",
+		"description": "Precision snow near obstacles is worth much more.",
+		"payout_multiplier": 1.10,
+		"depth_bonus": 0.015,
+		"target_factor": 1.04,
+		"extra_cars": 2,
+		"precision_multiplier": 2.25
+	}
+]
+
+
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
+	get_tree().paused = false
 	rng.randomize()
 	_create_snow_materials()
 	_load_progress()
@@ -95,12 +176,22 @@ func _ready() -> void:
 	_create_spray_resources()
 	_start_level(level_number)
 
-
 func _process(delta: float) -> void:
+	if get_tree().paused:
+		return
+
 	action_cooldown = maxf(action_cooldown - delta, 0.0)
 
 	if level_transitioning:
 		return
+
+	level_elapsed += delta
+
+	if combo_time_left > 0.0:
+		combo_time_left = maxf(combo_time_left - delta, 0.0)
+		if combo_time_left <= 0.0:
+			combo_tiles = 0
+			combo_multiplier = 1.0
 
 	var shovel_pressed := (
 		Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
@@ -116,6 +207,7 @@ func _process(delta: float) -> void:
 		completion_announced = true
 		_finish_level()
 
+	_update_dynamic_hud()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey):
@@ -123,18 +215,34 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not event.pressed or event.echo:
 		return
 
+	if event.keycode == KEY_ESCAPE:
+		if is_instance_valid(confirmation_overlay) and confirmation_overlay.visible:
+			_cancel_new_game()
+		elif is_instance_valid(pause_overlay) and pause_overlay.visible:
+			_resume_game()
+		else:
+			_open_pause_menu()
+		return
+
+	if get_tree().paused:
+		return
+
 	if event.keycode == KEY_U:
 		_buy_next_upgrade()
-	elif event.keycode == KEY_R and not level_transitioning:
-		_generate_snow()
-		status_label.text = "Fresh snow was generated for this property."
-
 
 func _start_level(new_level: int) -> void:
+	level_generation_id += 1
 	level_number = maxi(new_level, 1)
 	level_transitioning = false
 	completion_announced = false
 	action_cooldown = 0.0
+	level_elapsed = 0.0
+	combo_tiles = 0
+	combo_multiplier = 1.0
+	combo_time_left = 0.0
+	max_combo_multiplier = 1.0
+	level_money_earned = 0
+	level_precision_tiles = 0
 
 	current_level_seed = (
 		int(Time.get_ticks_msec())
@@ -142,6 +250,8 @@ func _start_level(new_level: int) -> void:
 		+ rng.randi_range(1, 999999)
 	)
 	rng.seed = current_level_seed
+
+	_select_contract()
 
 	current_grid_size = mini(
 		BASE_GRID_SIZE + (level_number - 1) * 2,
@@ -157,8 +267,9 @@ func _start_level(new_level: int) -> void:
 		3
 	)
 	current_car_count = mini(
-		1 + int(float(level_number - 1) / 1.4),
-		6
+		1 + int(float(level_number - 1) / 1.4)
+		+ contract_extra_cars,
+		7
 	)
 
 	_clear_old_level()
@@ -169,6 +280,15 @@ func _start_level(new_level: int) -> void:
 	_generate_small_obstacles()
 	_generate_snow()
 
+	target_time = maxf(
+		65.0,
+		(
+			float(total_snow) * 0.17
+			+ float(current_car_count) * 8.0
+			+ float(current_house_count) * 13.0
+		) * contract_target_factor
+	)
+
 	var spawn_position := Vector3(
 		0.0,
 		1.0,
@@ -177,20 +297,16 @@ func _start_level(new_level: int) -> void:
 	player.reset_for_level(spawn_position)
 	player.set_tool_model(upgrade_level + 1)
 
-	status_label.text = (
-		"Clear all accessible snow. Cars and buildings are solid obstacles."
-	)
+	status_label.text = contract_description
 	_show_level_banner(
-		"LEVEL %d\n%d HOUSES  |  %d CARS"
+		"LEVEL %d\n%s"
 		% [
 			level_number,
-			current_house_count,
-			current_car_count
+			contract_name.to_upper()
 		]
 	)
 	_update_hud()
 	_save_progress()
-
 
 func _clear_old_level() -> void:
 	active_snow.clear()
@@ -939,6 +1055,7 @@ func _generate_snow() -> void:
 	active_snow.clear()
 	snow_cleared = 0
 	completion_announced = false
+	level_precision_tiles = 0
 
 	var offset: float = (
 		float(current_grid_size - 1)
@@ -999,11 +1116,15 @@ func _generate_snow() -> void:
 			var snow_height: float = clampf(
 				SNOW_BASE_HEIGHT
 				+ level_depth_bonus
+				+ contract_depth_bonus
 				+ drift_height
 				+ rolling_height
 				+ random_height,
 				0.11,
-				0.37
+				0.43
+			)
+			var is_precision: bool = _point_is_precision_snow(
+				tile_position
 			)
 
 			var tile := Node3D.new()
@@ -1013,6 +1134,7 @@ func _generate_snow() -> void:
 				0.0,
 				tile_position.y
 			)
+			tile.set_meta("precision", is_precision)
 			snow_root.add_child(tile)
 
 			var material_index: int = (
@@ -1020,6 +1142,9 @@ func _generate_snow() -> void:
 				+ z
 				+ rng.randi_range(0, 2)
 			) % snow_materials.size()
+
+			if is_precision:
+				material_index = 2
 
 			var snow_mesh := _create_visual_box(
 				tile,
@@ -1065,7 +1190,6 @@ func _generate_snow() -> void:
 	total_snow = active_snow.size()
 	_update_hud()
 
-
 func _clear_snow_in_front() -> void:
 	if not is_instance_valid(player):
 		return
@@ -1080,6 +1204,7 @@ func _clear_snow_in_front() -> void:
 		clearing_center.z
 	)
 	var cleared_now: int = 0
+	var precision_now: int = 0
 	var level_payout_bonus: int = 1 + int(
 		float(level_number - 1) / 4.0
 	)
@@ -1097,24 +1222,72 @@ func _clear_snow_in_front() -> void:
 		)
 
 		if center_2d.distance_to(tile_2d) <= clear_radius:
+			var is_precision: bool = bool(
+				tile.get_meta("precision", false)
+			)
+			if is_precision:
+				precision_now += 1
+
 			active_snow.remove_at(index)
 			_animate_removed_snow(tile, forward)
 			snow_cleared += 1
-			money += payout_per_tile * level_payout_bonus
 			cleared_now += 1
 
-	if cleared_now > 0:
-		_spawn_snow_spray(
-			clearing_center,
-			forward,
-			cleared_now
-		)
-		status_label.text = (
-			"%d snow sections cleared."
-			% cleared_now
-		)
-		_update_hud()
+	if cleared_now <= 0:
+		return
 
+	combo_tiles += cleared_now
+	combo_time_left = 1.85
+	combo_multiplier = 1.0 + minf(
+		floorf(float(combo_tiles) / 18.0) * 0.25,
+		2.0
+	)
+	max_combo_multiplier = maxf(
+		max_combo_multiplier,
+		combo_multiplier
+	)
+
+	var base_value: float = (
+		float(cleared_now)
+		* float(payout_per_tile)
+		* float(level_payout_bonus)
+		* contract_payout_multiplier
+		* combo_multiplier
+	)
+	var precision_extra_value: float = (
+		float(precision_now)
+		* float(payout_per_tile)
+		* float(level_payout_bonus)
+		* contract_payout_multiplier
+		* combo_multiplier
+		* (contract_precision_multiplier - 1.0)
+	)
+	var earned: int = int(floorf(
+		base_value + precision_extra_value + 0.5
+	))
+
+	money += earned
+	level_money_earned += earned
+	level_precision_tiles += precision_now
+
+	_spawn_snow_spray(
+		clearing_center,
+		forward,
+		cleared_now
+	)
+
+	if precision_now > 0:
+		status_label.text = (
+			"Precision bonus: %d obstacle-edge sections. +%d"
+			% [precision_now, earned]
+		)
+	else:
+		status_label.text = (
+			"%d snow sections cleared. +%d"
+			% [cleared_now, earned]
+		)
+
+	_update_hud()
 
 func _animate_removed_snow(
 	tile: Node3D,
@@ -1244,30 +1417,66 @@ func _finish_level() -> void:
 		return
 
 	level_transitioning = true
-	var completion_bonus: int = (
-		75
-		+ level_number * 35
-		+ current_car_count * 20
-		+ current_house_count * 25
+
+	var time_ratio: float = level_elapsed / maxf(target_time, 1.0)
+	var star_rating: int = 1
+
+	if time_ratio <= 0.85:
+		star_rating = 3
+	elif time_ratio <= 1.15:
+		star_rating = 2
+
+	var time_difference: float = maxf(
+		target_time - level_elapsed,
+		0.0
 	)
+	var time_bonus: int = int(floorf(
+		time_difference * 2.5 + 0.5
+	))
+	var completion_bonus: int = (
+		70
+		+ level_number * 35
+		+ current_car_count * 18
+		+ current_house_count * 24
+		+ star_rating * 65
+		+ time_bonus
+	)
+
 	money += completion_bonus
+	level_money_earned += completion_bonus
+
+	var best_key := str(level_number)
+	var previous_best: float = float(
+		best_times.get(best_key, -1.0)
+	)
+	if previous_best < 0.0 or level_elapsed < previous_best:
+		best_times[best_key] = level_elapsed
 
 	status_label.text = (
-		"Level complete. Completion bonus: %d."
-		% completion_bonus
+		"Job complete. %d-star rating, +%d completion bonus."
+		% [star_rating, completion_bonus]
 	)
 	_show_level_banner(
-		"LEVEL %d COMPLETE\nBONUS: %d"
-		% [level_number, completion_bonus]
+		"LEVEL %d COMPLETE\n%s\nTIME %s  |  +%d"
+		% [
+			level_number,
+			_star_text(star_rating),
+			_format_time(level_elapsed),
+			completion_bonus
+		]
 	)
 	_update_hud()
 
 	level_number += 1
 	_save_progress()
 
-	await get_tree().create_timer(2.8).timeout
-	_start_level(level_number)
+	var completed_generation_id: int = level_generation_id
+	await get_tree().create_timer(3.3, false).timeout
 
+	if completed_generation_id != level_generation_id:
+		return
+
+	_start_level(level_number)
 
 func _buy_next_upgrade() -> void:
 	if level_transitioning:
@@ -1468,81 +1677,309 @@ func _create_spray_resources() -> void:
 func _create_hud() -> void:
 	var canvas := CanvasLayer.new()
 	canvas.name = "HUD"
+	canvas.layer = 10
 	add_child(canvas)
 
-	var panel := PanelContainer.new()
-	panel.position = Vector2(16.0, 16.0)
-	panel.custom_minimum_size = Vector2(520.0, 0.0)
-	canvas.add_child(panel)
+	hud_root = Control.new()
+	hud_root.name = "HUDRoot"
+	hud_root.set_anchors_and_offsets_preset(
+		Control.PRESET_FULL_RECT
+	)
+	hud_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud_root.process_mode = Node.PROCESS_MODE_ALWAYS
+	canvas.add_child(hud_root)
 
-	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 14)
-	margin.add_theme_constant_override("margin_right", 14)
-	margin.add_theme_constant_override("margin_top", 12)
-	margin.add_theme_constant_override("margin_bottom", 12)
-	panel.add_child(margin)
+	var job_panel := PanelContainer.new()
+	job_panel.name = "JobPanel"
+	job_panel.offset_left = 18.0
+	job_panel.offset_top = 18.0
+	job_panel.offset_right = 398.0
+	job_panel.offset_bottom = 182.0
+	job_panel.add_theme_stylebox_override(
+		"panel",
+		_make_panel_style(
+			Color(0.035, 0.055, 0.080, 0.92),
+			Color(0.22, 0.52, 0.78, 0.55),
+			14
+		)
+	)
+	hud_root.add_child(job_panel)
 
-	var layout := VBoxContainer.new()
-	layout.add_theme_constant_override("separation", 4)
-	margin.add_child(layout)
+	var job_layout := _create_panel_vbox(job_panel, 16, 5)
 
-	var title := Label.new()
-	title.text = "MR. PLOW – PROCEDURAL PROPERTIES"
-	title.add_theme_font_size_override("font_size", 21)
-	layout.add_child(title)
+	var job_header := Label.new()
+	job_header.text = "CURRENT JOB"
+	job_header.add_theme_font_size_override("font_size", 13)
+	job_header.add_theme_color_override(
+		"font_color",
+		Color(0.45, 0.74, 0.96)
+	)
+	job_layout.add_child(job_header)
 
 	level_label = Label.new()
-	layout.add_child(level_label)
+	level_label.add_theme_font_size_override("font_size", 25)
+	level_label.add_theme_color_override(
+		"font_color",
+		Color(0.96, 0.98, 1.0)
+	)
+	job_layout.add_child(level_label)
 
-	snow_label = Label.new()
-	layout.add_child(snow_label)
-
-	money_label = Label.new()
-	layout.add_child(money_label)
-
-	tool_label = Label.new()
-	layout.add_child(tool_label)
-
-	upgrade_label = Label.new()
-	upgrade_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	layout.add_child(upgrade_label)
+	contract_label = Label.new()
+	contract_label.add_theme_font_size_override("font_size", 17)
+	contract_label.add_theme_color_override(
+		"font_color",
+		Color(0.82, 0.90, 0.98)
+	)
+	contract_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	job_layout.add_child(contract_label)
 
 	layout_label = Label.new()
-	layout.add_child(layout_label)
+	layout_label.add_theme_font_size_override("font_size", 13)
+	layout_label.add_theme_color_override(
+		"font_color",
+		Color(0.62, 0.70, 0.79)
+	)
+	job_layout.add_child(layout_label)
+
+	var progress_panel := PanelContainer.new()
+	progress_panel.name = "ProgressPanel"
+	progress_panel.anchor_left = 0.5
+	progress_panel.anchor_right = 0.5
+	progress_panel.offset_left = -250.0
+	progress_panel.offset_top = 18.0
+	progress_panel.offset_right = 250.0
+	progress_panel.offset_bottom = 128.0
+	progress_panel.add_theme_stylebox_override(
+		"panel",
+		_make_panel_style(
+			Color(0.035, 0.055, 0.080, 0.92),
+			Color(0.22, 0.52, 0.78, 0.45),
+			14
+		)
+	)
+	hud_root.add_child(progress_panel)
+
+	var progress_layout := _create_panel_vbox(
+		progress_panel,
+		15,
+		7
+	)
+
+	progress_value_label = Label.new()
+	progress_value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	progress_value_label.add_theme_font_size_override(
+		"font_size",
+		18
+	)
+	progress_value_label.add_theme_color_override(
+		"font_color",
+		Color(0.93, 0.97, 1.0)
+	)
+	progress_layout.add_child(progress_value_label)
+
+	progress_bar = ProgressBar.new()
+	progress_bar.custom_minimum_size = Vector2(0.0, 17.0)
+	progress_bar.min_value = 0.0
+	progress_bar.max_value = 100.0
+	progress_bar.show_percentage = false
+	progress_bar.add_theme_stylebox_override(
+		"background",
+		_make_panel_style(
+			Color(0.01, 0.02, 0.035, 0.82),
+			Color(0.16, 0.24, 0.34, 0.8),
+			8
+		)
+	)
+	progress_bar.add_theme_stylebox_override(
+		"fill",
+		_make_panel_style(
+			Color(0.20, 0.63, 0.88, 1.0),
+			Color(0.50, 0.82, 1.0, 0.9),
+			8
+		)
+	)
+	progress_layout.add_child(progress_bar)
+
+	timer_label = Label.new()
+	timer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	timer_label.add_theme_font_size_override("font_size", 14)
+	timer_label.add_theme_color_override(
+		"font_color",
+		Color(0.70, 0.79, 0.88)
+	)
+	progress_layout.add_child(timer_label)
+
+	var stats_panel := PanelContainer.new()
+	stats_panel.name = "StatsPanel"
+	stats_panel.anchor_left = 1.0
+	stats_panel.anchor_right = 1.0
+	stats_panel.offset_left = -350.0
+	stats_panel.offset_top = 18.0
+	stats_panel.offset_right = -18.0
+	stats_panel.offset_bottom = 206.0
+	stats_panel.add_theme_stylebox_override(
+		"panel",
+		_make_panel_style(
+			Color(0.035, 0.055, 0.080, 0.92),
+			Color(0.22, 0.52, 0.78, 0.55),
+			14
+		)
+	)
+	hud_root.add_child(stats_panel)
+
+	var stats_layout := _create_panel_vbox(
+		stats_panel,
+		15,
+		6
+	)
+
+	money_label = Label.new()
+	money_label.add_theme_font_size_override("font_size", 27)
+	money_label.add_theme_color_override(
+		"font_color",
+		Color(0.45, 0.92, 0.65)
+	)
+	stats_layout.add_child(money_label)
+
+	combo_label = Label.new()
+	combo_label.add_theme_font_size_override("font_size", 20)
+	combo_label.add_theme_color_override(
+		"font_color",
+		Color(1.0, 0.78, 0.28)
+	)
+	stats_layout.add_child(combo_label)
+
+	tool_label = Label.new()
+	tool_label.add_theme_font_size_override("font_size", 14)
+	tool_label.add_theme_color_override(
+		"font_color",
+		Color(0.78, 0.85, 0.92)
+	)
+	tool_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	stats_layout.add_child(tool_label)
+
+	upgrade_label = Label.new()
+	upgrade_label.add_theme_font_size_override("font_size", 13)
+	upgrade_label.add_theme_color_override(
+		"font_color",
+		Color(0.55, 0.72, 0.88)
+	)
+	upgrade_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	stats_layout.add_child(upgrade_label)
+
+	var button_row := HBoxContainer.new()
+	button_row.alignment = BoxContainer.ALIGNMENT_END
+	button_row.add_theme_constant_override("separation", 8)
+	stats_layout.add_child(button_row)
+
+	var menu_button := Button.new()
+	menu_button.text = "MENU"
+	menu_button.custom_minimum_size = Vector2(94.0, 34.0)
+	_style_button(menu_button, false)
+	menu_button.pressed.connect(_open_pause_menu)
+	button_row.add_child(menu_button)
+
+	var new_game_button := Button.new()
+	new_game_button.text = "NEW GAME"
+	new_game_button.custom_minimum_size = Vector2(118.0, 34.0)
+	_style_button(new_game_button, true)
+	new_game_button.pressed.connect(_request_new_game)
+	button_row.add_child(new_game_button)
+
+	var status_panel := PanelContainer.new()
+	status_panel.name = "StatusPanel"
+	status_panel.anchor_top = 1.0
+	status_panel.anchor_bottom = 1.0
+	status_panel.offset_left = 18.0
+	status_panel.offset_top = -118.0
+	status_panel.offset_right = 690.0
+	status_panel.offset_bottom = -18.0
+	status_panel.add_theme_stylebox_override(
+		"panel",
+		_make_panel_style(
+			Color(0.035, 0.055, 0.080, 0.90),
+			Color(0.18, 0.36, 0.52, 0.45),
+			14
+		)
+	)
+	hud_root.add_child(status_panel)
+
+	var status_layout := _create_panel_vbox(
+		status_panel,
+		14,
+		4
+	)
+
+	status_label = Label.new()
+	status_label.add_theme_font_size_override("font_size", 15)
+	status_label.add_theme_color_override(
+		"font_color",
+		Color(0.92, 0.95, 0.98)
+	)
+	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	status_layout.add_child(status_label)
+
+	bonus_label = Label.new()
+	bonus_label.add_theme_font_size_override("font_size", 13)
+	bonus_label.add_theme_color_override(
+		"font_color",
+		Color(0.58, 0.76, 0.91)
+	)
+	status_layout.add_child(bonus_label)
 
 	var controls := Label.new()
 	controls.text = (
-		"WASD: Move | Mouse: Look | "
-		+ "Left click/Space: Shovel | "
-		+ "U: Upgrade | R: Fresh snow | Esc: Cursor"
+		"WASD Move   |   Mouse Look   |   Left Click / Space Shovel"
+		+ "   |   U Upgrade   |   Esc Menu"
 	)
-	controls.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	layout.add_child(controls)
-
-	status_label = Label.new()
-	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	status_label.add_theme_font_size_override("font_size", 16)
-	layout.add_child(status_label)
+	controls.add_theme_font_size_override("font_size", 12)
+	controls.add_theme_color_override(
+		"font_color",
+		Color(0.52, 0.60, 0.68)
+	)
+	status_layout.add_child(controls)
 
 	var crosshair := Label.new()
 	crosshair.text = "+"
-	crosshair.add_theme_font_size_override("font_size", 28)
+	crosshair.add_theme_font_size_override("font_size", 27)
+	crosshair.add_theme_color_override(
+		"font_color",
+		Color(0.92, 0.97, 1.0, 0.86)
+	)
 	crosshair.set_anchors_preset(Control.PRESET_CENTER)
 	crosshair.position = Vector2(-8.0, -18.0)
 	crosshair.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	canvas.add_child(crosshair)
+	hud_root.add_child(crosshair)
 
 	level_banner = Label.new()
 	level_banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	level_banner.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	level_banner.add_theme_font_size_override("font_size", 34)
+	level_banner.add_theme_color_override(
+		"font_color",
+		Color(0.96, 0.98, 1.0)
+	)
+	level_banner.add_theme_color_override(
+		"font_shadow_color",
+		Color(0.0, 0.0, 0.0, 0.85)
+	)
+	level_banner.add_theme_constant_override(
+		"shadow_offset_x",
+		3
+	)
+	level_banner.add_theme_constant_override(
+		"shadow_offset_y",
+		3
+	)
 	level_banner.set_anchors_preset(Control.PRESET_CENTER)
-	level_banner.position = Vector2(-260.0, -75.0)
-	level_banner.size = Vector2(520.0, 150.0)
+	level_banner.position = Vector2(-320.0, -100.0)
+	level_banner.size = Vector2(640.0, 200.0)
 	level_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	level_banner.visible = false
-	canvas.add_child(level_banner)
+	hud_root.add_child(level_banner)
 
+	_create_pause_menu()
+	_create_new_game_confirmation()
 
 func _show_level_banner(text: String) -> void:
 	level_banner.text = text
@@ -1574,43 +2011,49 @@ func _update_hud() -> void:
 	if not is_instance_valid(level_label):
 		return
 
-	var percentage: int = 0
+	var percentage: float = 0.0
 	if total_snow > 0:
-		percentage = int(
+		percentage = (
 			float(snow_cleared)
 			/ float(total_snow)
 			* 100.0
 		)
 
-	level_label.text = "Level: %d" % level_number
-	snow_label.text = (
-		"Cleared snow: %d / %d (%d%%)"
-		% [snow_cleared, total_snow, percentage]
-	)
-	money_label.text = "Money: %d" % money
-	tool_label.text = "Tool: %s | Clearing width: %.2f m" % [
-		current_tool_name,
-		clear_radius * 2.0
-	]
-	layout_label.text = "Property layout: %d houses, %d cars | Seed: %d" % [
+	level_label.text = "LEVEL %d" % level_number
+	contract_label.text = contract_name
+	layout_label.text = "%d houses  |  %d cars  |  seed %d" % [
 		current_house_count,
 		current_car_count,
 		current_level_seed
+	]
+
+	progress_bar.value = percentage
+	progress_value_label.text = (
+		"PROPERTY CLEARED  %d%%"
+		% int(floorf(percentage + 0.5))
+	)
+
+	money_label.text = "$%d" % money
+	combo_label.text = "COMBO  x%.2f" % combo_multiplier
+	tool_label.text = "%s  |  %.2f m clearing width" % [
+		current_tool_name,
+		clear_radius * 2.0
 	]
 
 	var next_index: int = upgrade_level + 1
 	if next_index < upgrades.size():
 		var next_upgrade: Dictionary = upgrades[next_index]
 		upgrade_label.text = (
-			"Next upgrade [U]: %s – %d"
+			"Next upgrade [U]: %s – $%d"
 			% [
 				str(next_upgrade["name"]),
 				int(next_upgrade["cost"])
 			]
 		)
 	else:
-		upgrade_label.text = "All equipment upgrades are unlocked."
+		upgrade_label.text = "All equipment upgrades unlocked."
 
+	_update_dynamic_hud()
 
 func _save_progress() -> void:
 	var file := FileAccess.open(
@@ -1623,10 +2066,10 @@ func _save_progress() -> void:
 	var data := {
 		"level": level_number,
 		"money": money,
-		"upgrade_level": upgrade_level
+		"upgrade_level": upgrade_level,
+		"best_times": best_times
 	}
 	file.store_string(JSON.stringify(data))
-
 
 func _load_progress() -> void:
 	if not FileAccess.file_exists(SAVE_PATH):
@@ -1639,7 +2082,9 @@ func _load_progress() -> void:
 	if file == null:
 		return
 
-	var parsed = JSON.parse_string(file.get_as_text())
+	var parsed: Variant = JSON.parse_string(
+		file.get_as_text()
+	)
 	if typeof(parsed) != TYPE_DICTIONARY:
 		return
 
@@ -1657,6 +2102,527 @@ func _load_progress() -> void:
 		-1,
 		upgrades.size() - 1
 	)
+
+	var loaded_best_times: Variant = data.get(
+		"best_times",
+		{}
+	)
+	if typeof(loaded_best_times) == TYPE_DICTIONARY:
+		var loaded_dictionary: Dictionary = loaded_best_times
+		best_times = loaded_dictionary.duplicate(true)
+
+
+func _select_contract() -> void:
+	var maximum_index: int = contracts.size() - 1
+
+	if level_number <= 1:
+		maximum_index = mini(maximum_index, 1)
+	elif level_number <= 3:
+		maximum_index = mini(maximum_index, 3)
+
+	var selected_index: int = rng.randi_range(
+		0,
+		maximum_index
+	)
+	current_contract = contracts[selected_index]
+
+	contract_name = str(
+		current_contract.get(
+			"name",
+			"Standard Residential"
+		)
+	)
+	contract_description = str(
+		current_contract.get(
+			"description",
+			"Clear all accessible snow."
+		)
+	)
+	contract_payout_multiplier = float(
+		current_contract.get(
+			"payout_multiplier",
+			1.0
+		)
+	)
+	contract_depth_bonus = float(
+		current_contract.get(
+			"depth_bonus",
+			0.0
+		)
+	)
+	contract_target_factor = float(
+		current_contract.get(
+			"target_factor",
+			1.0
+		)
+	)
+	contract_extra_cars = int(
+		current_contract.get(
+			"extra_cars",
+			0
+		)
+	)
+	contract_precision_multiplier = float(
+		current_contract.get(
+			"precision_multiplier",
+			1.5
+		)
+	)
+
+
+func _point_is_precision_snow(point: Vector2) -> bool:
+	for blocker in blockers:
+		var center: Vector2 = blocker["center"]
+		var half_size: Vector2 = blocker["half_size"]
+		var angle: float = float(blocker["angle"])
+		var local_point: Vector2 = (
+			point - center
+		).rotated(-angle)
+
+		var distance_x: float = maxf(
+			absf(local_point.x) - half_size.x,
+			0.0
+		)
+		var distance_y: float = maxf(
+			absf(local_point.y) - half_size.y,
+			0.0
+		)
+		var edge_distance: float = Vector2(
+			distance_x,
+			distance_y
+		).length()
+
+		if edge_distance <= 0.64:
+			return true
+
+	return false
+
+
+func _update_dynamic_hud() -> void:
+	if not is_instance_valid(timer_label):
+		return
+
+	var best_key := str(level_number)
+	var best_time: float = float(
+		best_times.get(best_key, -1.0)
+	)
+	var best_text := "--:--"
+
+	if best_time >= 0.0:
+		best_text = _format_time(best_time)
+
+	timer_label.text = "TIME %s   |   TARGET %s   |   BEST %s" % [
+		_format_time(level_elapsed),
+		_format_time(target_time),
+		best_text
+	]
+
+	combo_label.text = "COMBO  x%.2f" % combo_multiplier
+	bonus_label.text = (
+		"Job earnings: $%d   |   Precision sections: %d"
+		+ "   |   Best combo: x%.2f"
+	) % [
+		level_money_earned,
+		level_precision_tiles,
+		max_combo_multiplier
+	]
+
+
+func _format_time(seconds_value: float) -> String:
+	var safe_seconds: int = maxi(
+		int(floorf(seconds_value)),
+		0
+	)
+	var minutes: int = int(float(safe_seconds) / 60.0)
+	var seconds: int = safe_seconds % 60
+	return "%02d:%02d" % [minutes, seconds]
+
+
+func _star_text(star_rating: int) -> String:
+	match star_rating:
+		3:
+			return "THREE-STAR SERVICE"
+		2:
+			return "TWO-STAR SERVICE"
+		_:
+			return "JOB COMPLETED"
+
+
+func _create_panel_vbox(
+	panel: PanelContainer,
+	margin_size: int,
+	separation: int
+) -> VBoxContainer:
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override(
+		"margin_left",
+		margin_size
+	)
+	margin.add_theme_constant_override(
+		"margin_right",
+		margin_size
+	)
+	margin.add_theme_constant_override(
+		"margin_top",
+		margin_size
+	)
+	margin.add_theme_constant_override(
+		"margin_bottom",
+		margin_size
+	)
+	panel.add_child(margin)
+
+	var layout := VBoxContainer.new()
+	layout.add_theme_constant_override(
+		"separation",
+		separation
+	)
+	margin.add_child(layout)
+	return layout
+
+
+func _make_panel_style(
+	background_color: Color,
+	border_color: Color,
+	radius: int
+) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = background_color
+	style.border_color = border_color
+	style.border_width_left = 1
+	style.border_width_top = 1
+	style.border_width_right = 1
+	style.border_width_bottom = 1
+	style.corner_radius_top_left = radius
+	style.corner_radius_top_right = radius
+	style.corner_radius_bottom_left = radius
+	style.corner_radius_bottom_right = radius
+	return style
+
+
+func _style_button(
+	button: Button,
+	danger: bool
+) -> void:
+	var normal_color := Color(0.08, 0.16, 0.23, 0.96)
+	var hover_color := Color(0.12, 0.28, 0.40, 1.0)
+	var pressed_color := Color(0.06, 0.12, 0.18, 1.0)
+	var border_color := Color(0.30, 0.62, 0.84, 0.75)
+	var font_color := Color(0.90, 0.96, 1.0)
+
+	if danger:
+		normal_color = Color(0.34, 0.09, 0.10, 0.96)
+		hover_color = Color(0.55, 0.13, 0.14, 1.0)
+		pressed_color = Color(0.25, 0.05, 0.06, 1.0)
+		border_color = Color(0.92, 0.36, 0.38, 0.80)
+		font_color = Color(1.0, 0.92, 0.92)
+
+	button.add_theme_stylebox_override(
+		"normal",
+		_make_panel_style(
+			normal_color,
+			border_color,
+			8
+		)
+	)
+	button.add_theme_stylebox_override(
+		"hover",
+		_make_panel_style(
+			hover_color,
+			border_color,
+			8
+		)
+	)
+	button.add_theme_stylebox_override(
+		"pressed",
+		_make_panel_style(
+			pressed_color,
+			border_color,
+			8
+		)
+	)
+	button.add_theme_stylebox_override(
+		"focus",
+		_make_panel_style(
+			hover_color,
+			Color(0.75, 0.90, 1.0, 1.0),
+			8
+		)
+	)
+	button.add_theme_color_override(
+		"font_color",
+		font_color
+	)
+	button.add_theme_color_override(
+		"font_hover_color",
+		font_color
+	)
+	button.add_theme_color_override(
+		"font_pressed_color",
+		font_color
+	)
+	button.add_theme_font_size_override(
+		"font_size",
+		14
+	)
+
+
+func _create_pause_menu() -> void:
+	pause_overlay = ColorRect.new()
+	pause_overlay.name = "PauseOverlay"
+	pause_overlay.set_anchors_and_offsets_preset(
+		Control.PRESET_FULL_RECT
+	)
+	pause_overlay.color = Color(0.005, 0.012, 0.022, 0.78)
+	pause_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	pause_overlay.process_mode = Node.PROCESS_MODE_ALWAYS
+	pause_overlay.visible = false
+	hud_root.add_child(pause_overlay)
+
+	var menu_panel := PanelContainer.new()
+	menu_panel.anchor_left = 0.5
+	menu_panel.anchor_top = 0.5
+	menu_panel.anchor_right = 0.5
+	menu_panel.anchor_bottom = 0.5
+	menu_panel.offset_left = -220.0
+	menu_panel.offset_top = -195.0
+	menu_panel.offset_right = 220.0
+	menu_panel.offset_bottom = 195.0
+	menu_panel.add_theme_stylebox_override(
+		"panel",
+		_make_panel_style(
+			Color(0.035, 0.055, 0.080, 0.98),
+			Color(0.30, 0.62, 0.84, 0.72),
+			18
+		)
+	)
+	pause_overlay.add_child(menu_panel)
+
+	var layout := _create_panel_vbox(
+		menu_panel,
+		28,
+		14
+	)
+	layout.alignment = BoxContainer.ALIGNMENT_CENTER
+
+	var title := Label.new()
+	title.text = "MR. PLOW"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 34)
+	title.add_theme_color_override(
+		"font_color",
+		Color(0.94, 0.98, 1.0)
+	)
+	layout.add_child(title)
+
+	var subtitle := Label.new()
+	subtitle.text = "Game paused"
+	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	subtitle.add_theme_font_size_override("font_size", 16)
+	subtitle.add_theme_color_override(
+		"font_color",
+		Color(0.57, 0.72, 0.84)
+	)
+	layout.add_child(subtitle)
+
+	var spacer := Control.new()
+	spacer.custom_minimum_size = Vector2(0.0, 10.0)
+	layout.add_child(spacer)
+
+	var resume_button := Button.new()
+	resume_button.text = "RESUME"
+	resume_button.custom_minimum_size = Vector2(0.0, 46.0)
+	_style_button(resume_button, false)
+	resume_button.pressed.connect(_resume_game)
+	layout.add_child(resume_button)
+
+	var new_game_button := Button.new()
+	new_game_button.text = "NEW GAME"
+	new_game_button.custom_minimum_size = Vector2(0.0, 46.0)
+	_style_button(new_game_button, true)
+	new_game_button.pressed.connect(_request_new_game)
+	layout.add_child(new_game_button)
+
+	var quit_button := Button.new()
+	quit_button.text = "QUIT"
+	quit_button.custom_minimum_size = Vector2(0.0, 46.0)
+	_style_button(quit_button, false)
+	quit_button.pressed.connect(_quit_game)
+	layout.add_child(quit_button)
+
+	var hint := Label.new()
+	hint.text = "Esc resumes the game"
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.add_theme_font_size_override("font_size", 12)
+	hint.add_theme_color_override(
+		"font_color",
+		Color(0.48, 0.57, 0.65)
+	)
+	layout.add_child(hint)
+
+
+func _create_new_game_confirmation() -> void:
+	confirmation_overlay = ColorRect.new()
+	confirmation_overlay.name = "NewGameConfirmation"
+	confirmation_overlay.set_anchors_and_offsets_preset(
+		Control.PRESET_FULL_RECT
+	)
+	confirmation_overlay.color = Color(
+		0.005,
+		0.012,
+		0.022,
+		0.86
+	)
+	confirmation_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	confirmation_overlay.process_mode = Node.PROCESS_MODE_ALWAYS
+	confirmation_overlay.visible = false
+	hud_root.add_child(confirmation_overlay)
+
+	var panel := PanelContainer.new()
+	panel.anchor_left = 0.5
+	panel.anchor_top = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_bottom = 0.5
+	panel.offset_left = -245.0
+	panel.offset_top = -145.0
+	panel.offset_right = 245.0
+	panel.offset_bottom = 145.0
+	panel.add_theme_stylebox_override(
+		"panel",
+		_make_panel_style(
+			Color(0.055, 0.045, 0.055, 0.99),
+			Color(0.92, 0.36, 0.38, 0.82),
+			18
+		)
+	)
+	confirmation_overlay.add_child(panel)
+
+	var layout := _create_panel_vbox(
+		panel,
+		26,
+		13
+	)
+	layout.alignment = BoxContainer.ALIGNMENT_CENTER
+
+	var title := Label.new()
+	title.text = "START A NEW GAME?"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 26)
+	title.add_theme_color_override(
+		"font_color",
+		Color(1.0, 0.92, 0.92)
+	)
+	layout.add_child(title)
+
+	var warning := Label.new()
+	warning.text = (
+		"This resets your level, money, equipment, "
+		+ "and saved best times."
+	)
+	warning.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	warning.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	warning.add_theme_font_size_override("font_size", 15)
+	warning.add_theme_color_override(
+		"font_color",
+		Color(0.82, 0.78, 0.80)
+	)
+	layout.add_child(warning)
+
+	var buttons := HBoxContainer.new()
+	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	buttons.add_theme_constant_override("separation", 12)
+	layout.add_child(buttons)
+
+	var cancel_button := Button.new()
+	cancel_button.text = "CANCEL"
+	cancel_button.custom_minimum_size = Vector2(150.0, 44.0)
+	_style_button(cancel_button, false)
+	cancel_button.pressed.connect(_cancel_new_game)
+	buttons.add_child(cancel_button)
+
+	var confirm_button := Button.new()
+	confirm_button.text = "RESET PROGRESS"
+	confirm_button.custom_minimum_size = Vector2(190.0, 44.0)
+	_style_button(confirm_button, true)
+	confirm_button.pressed.connect(_confirm_new_game)
+	buttons.add_child(confirm_button)
+
+
+func _open_pause_menu() -> void:
+	if not is_instance_valid(pause_overlay):
+		return
+	if is_instance_valid(confirmation_overlay):
+		confirmation_overlay.visible = false
+
+	pause_overlay.visible = true
+	get_tree().paused = true
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+
+func _resume_game() -> void:
+	if is_instance_valid(pause_overlay):
+		pause_overlay.visible = false
+	if is_instance_valid(confirmation_overlay):
+		confirmation_overlay.visible = false
+
+	get_tree().paused = false
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+
+func _request_new_game() -> void:
+	confirm_return_to_pause = (
+		is_instance_valid(pause_overlay)
+		and pause_overlay.visible
+	)
+
+	if is_instance_valid(pause_overlay):
+		pause_overlay.visible = false
+	if is_instance_valid(confirmation_overlay):
+		confirmation_overlay.visible = true
+
+	get_tree().paused = true
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+
+func _cancel_new_game() -> void:
+	if is_instance_valid(confirmation_overlay):
+		confirmation_overlay.visible = false
+
+	if confirm_return_to_pause:
+		if is_instance_valid(pause_overlay):
+			pause_overlay.visible = true
+		get_tree().paused = true
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	else:
+		get_tree().paused = false
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+
+func _confirm_new_game() -> void:
+	if is_instance_valid(confirmation_overlay):
+		confirmation_overlay.visible = false
+	if is_instance_valid(pause_overlay):
+		pause_overlay.visible = false
+
+	get_tree().paused = false
+
+	level_number = 1
+	money = 0
+	upgrade_level = -1
+	best_times.clear()
+	_apply_upgrade_state()
+
+	if is_instance_valid(player):
+		player.set_tool_model(0)
+
+	_save_progress()
+	_start_level(1)
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+
+func _quit_game() -> void:
+	get_tree().paused = false
+	get_tree().quit()
 
 
 func _make_material(
