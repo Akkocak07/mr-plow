@@ -1,6 +1,6 @@
 extends CharacterBody3D
 
-@export var movement_speed: float = 5.5
+@export var movement_speed: float = 5.2
 @export var acceleration: float = 22.0
 @export var gravity_strength: float = 24.0
 @export var mouse_sensitivity: float = 0.0022
@@ -68,9 +68,13 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 
 	if input_vector.length() > 0.05 and is_on_floor():
-		walk_time += delta * 9.0
+		walk_time += delta * 8.5
 	else:
-		walk_time = lerpf(walk_time, 0.0, minf(delta * 8.0, 1.0))
+		walk_time = lerpf(
+			walk_time,
+			0.0,
+			minf(delta * 8.0, 1.0)
+		)
 
 
 func _process(delta: float) -> void:
@@ -79,8 +83,15 @@ func _process(delta: float) -> void:
 
 	tool_action_time = maxf(tool_action_time - delta, 0.0)
 
-	var movement_amount: float = Vector2(velocity.x, velocity.z).length()
-	var bob_strength: float = clampf(movement_amount / movement_speed, 0.0, 1.0)
+	var movement_amount: float = Vector2(
+		velocity.x,
+		velocity.z
+	).length()
+	var bob_strength: float = clampf(
+		movement_amount / movement_speed,
+		0.0,
+		1.0
+	)
 	var bob := Vector3(
 		cos(walk_time * 0.5) * 0.012,
 		sin(walk_time) * 0.018,
@@ -91,17 +102,28 @@ func _process(delta: float) -> void:
 	var action_rotation := Vector3.ZERO
 
 	if tool_action_time > 0.0:
-		var progress: float = 1.0 - (tool_action_time / 0.24)
+		var progress: float = 1.0 - (tool_action_time / 0.28)
 		var swing: float = sin(progress * PI)
-		action_offset = Vector3(-0.06 * swing, -0.13 * swing, -0.20 * swing)
+		action_offset = Vector3(
+			-0.08 * swing,
+			-0.16 * swing,
+			-0.24 * swing
+		)
 		action_rotation = Vector3(
-			deg_to_rad(-24.0) * swing,
-			0.0,
-			deg_to_rad(8.0) * swing
+			deg_to_rad(-29.0) * swing,
+			deg_to_rad(3.0) * swing,
+			deg_to_rad(10.0) * swing
 		)
 
-	tool_anchor.position = base_tool_position + bob + action_offset
-	tool_anchor.rotation = base_tool_rotation + action_rotation
+	tool_anchor.position = (
+		base_tool_position
+		+ bob
+		+ action_offset
+	)
+	tool_anchor.rotation = (
+		base_tool_rotation
+		+ action_rotation
+	)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -109,7 +131,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 			rotate_y(-event.relative.x * mouse_sensitivity)
 			camera_pitch = clampf(
-				camera_pitch - event.relative.y * mouse_sensitivity,
+				camera_pitch
+				- event.relative.y * mouse_sensitivity,
 				deg_to_rad(-82.0),
 				deg_to_rad(82.0)
 			)
@@ -128,13 +151,23 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func play_tool_action() -> void:
-	tool_action_time = 0.24
+	tool_action_time = 0.28
 
 
 func get_forward_direction() -> Vector3:
 	var forward := -global_transform.basis.z
 	forward.y = 0.0
 	return forward.normalized()
+
+
+func reset_for_level(spawn_position: Vector3) -> void:
+	global_position = spawn_position
+	rotation = Vector3.ZERO
+	velocity = Vector3.ZERO
+	camera_pitch = 0.0
+
+	if is_instance_valid(camera):
+		camera.rotation = Vector3.ZERO
 
 
 func set_tool_model(model_index: int) -> void:
@@ -181,7 +214,7 @@ func _create_tool_anchor() -> void:
 
 func _build_basic_shovel() -> void:
 	var wood := _material(Color(0.42, 0.23, 0.08), 0.90, 0.0)
-	var metal := _material(Color(0.20, 0.28, 0.38), 0.48, 0.35)
+	var metal := _material(Color(0.17, 0.24, 0.34), 0.44, 0.42)
 
 	var handle := _box(
 		tool_model_root,
@@ -204,7 +237,7 @@ func _build_basic_shovel() -> void:
 	var blade := _box(
 		tool_model_root,
 		"Blade",
-		Vector3(0.50, 0.08, 0.38),
+		Vector3(0.52, 0.08, 0.40),
 		Vector3(0.18, -0.48, -0.04),
 		metal
 	)
@@ -213,8 +246,8 @@ func _build_basic_shovel() -> void:
 
 func _build_wide_shovel() -> void:
 	var dark := _material(Color(0.08, 0.10, 0.13), 0.78, 0.05)
-	var blue := _material(Color(0.06, 0.27, 0.62), 0.55, 0.10)
-	var edge := _material(Color(0.52, 0.58, 0.65), 0.38, 0.48)
+	var blue := _material(Color(0.05, 0.25, 0.62), 0.52, 0.12)
+	var edge := _material(Color(0.54, 0.60, 0.67), 0.32, 0.58)
 
 	var handle := _box(
 		tool_model_root,
@@ -225,19 +258,19 @@ func _build_wide_shovel() -> void:
 	)
 	handle.rotation_degrees.z = -15.0
 
-	var grip_left := _box(
+	var grip := _box(
 		tool_model_root,
-		"GripLeft",
+		"Grip",
 		Vector3(0.34, 0.08, 0.08),
 		Vector3(-0.20, 0.56, 0.0),
 		dark
 	)
-	grip_left.rotation_degrees.z = -15.0
+	grip.rotation_degrees.z = -15.0
 
 	var blade := _box(
 		tool_model_root,
 		"WideBlade",
-		Vector3(0.92, 0.10, 0.43),
+		Vector3(0.94, 0.10, 0.44),
 		Vector3(0.20, -0.46, -0.05),
 		blue
 	)
@@ -246,7 +279,7 @@ func _build_wide_shovel() -> void:
 	var cutting_edge := _box(
 		tool_model_root,
 		"CuttingEdge",
-		Vector3(0.96, 0.06, 0.08),
+		Vector3(0.98, 0.06, 0.08),
 		Vector3(0.24, -0.62, -0.10),
 		edge
 	)
@@ -254,14 +287,18 @@ func _build_wide_shovel() -> void:
 
 
 func _build_snow_blower() -> void:
-	var body_material := _material(Color(0.82, 0.16, 0.06), 0.55, 0.12)
-	var dark := _material(Color(0.06, 0.07, 0.09), 0.80, 0.05)
-	var metal := _material(Color(0.35, 0.42, 0.48), 0.34, 0.55)
+	var body_material := _material(
+		Color(0.82, 0.15, 0.05),
+		0.50,
+		0.15
+	)
+	var dark := _material(Color(0.05, 0.06, 0.08), 0.80, 0.05)
+	var metal := _material(Color(0.35, 0.42, 0.48), 0.30, 0.62)
 
 	_box(
 		tool_model_root,
 		"MachineBody",
-		Vector3(0.76, 0.48, 0.62),
+		Vector3(0.78, 0.50, 0.64),
 		Vector3(0.0, -0.18, 0.0),
 		body_material
 	)
@@ -282,8 +319,8 @@ func _build_snow_blower() -> void:
 		"Auger",
 		0.23,
 		0.23,
-		0.82,
-		Vector3(0.0, -0.38, -0.22),
+		0.84,
+		Vector3(0.0, -0.38, -0.23),
 		metal
 	)
 	auger.rotation_degrees.z = 90.0
@@ -320,15 +357,27 @@ func _build_snow_blower() -> void:
 
 
 func _build_compact_plow() -> void:
-	var body_material := _material(Color(0.92, 0.57, 0.05), 0.52, 0.15)
-	var blade_material := _material(Color(0.15, 0.25, 0.38), 0.36, 0.52)
+	var body_material := _material(
+		Color(0.92, 0.56, 0.04),
+		0.48,
+		0.18
+	)
+	var blade_material := _material(
+		Color(0.13, 0.23, 0.37),
+		0.30,
+		0.62
+	)
 	var dark := _material(Color(0.05, 0.06, 0.08), 0.82, 0.02)
-	var light_material := _material(Color(0.95, 0.92, 0.68), 0.20, 0.05)
+	var light_material := _material(
+		Color(0.95, 0.92, 0.68),
+		0.20,
+		0.05
+	)
 
 	_box(
 		tool_model_root,
 		"VehicleBody",
-		Vector3(0.78, 0.48, 0.72),
+		Vector3(0.80, 0.50, 0.74),
 		Vector3(0.0, -0.06, 0.10),
 		body_material
 	)
@@ -344,9 +393,9 @@ func _build_compact_plow() -> void:
 	var plow_blade := _box(
 		tool_model_root,
 		"PlowBlade",
-		Vector3(1.28, 0.46, 0.12),
+		Vector3(1.30, 0.48, 0.12),
 		Vector3(0.0, -0.32, -0.46),
-		blade_material
+	blade_material
 	)
 	plow_blade.rotation_degrees.y = -10.0
 	plow_blade.rotation_degrees.x = -8.0
@@ -417,6 +466,7 @@ func _cylinder(
 	var instance := MeshInstance3D.new()
 	instance.name = node_name
 	instance.position = position
+
 	var mesh := CylinderMesh.new()
 	mesh.top_radius = top_radius
 	mesh.bottom_radius = bottom_radius
